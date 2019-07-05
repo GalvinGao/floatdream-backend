@@ -1,0 +1,11 @@
+server:
+  address: ":8080"
+  cors: true
+
+database:
+  web: "user:password@/floatdream_web?charset=utf8mb4&parseTime=True&loc=Local"
+  authMe: "user:password@/floatdream_authme?charset=utf8mb4&parseTime=True&loc=Local"
+  game: "user:password@/floatdream_game?charset=utf8mb4&parseTime=True&loc=Local"
+
+encrypt:
+  privateKey: "privateKey.pem"
