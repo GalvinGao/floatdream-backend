@@ -1,4 +1,4 @@
-package floatdream_backend_copy
+package main
 
 import (
 	"crypto/rand"
@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"io/ioutil"
+	"log"
 )
 
 type Decryptor struct {
@@ -16,15 +17,15 @@ type Decryptor struct {
 func NewDecryptor(fileName string) Decryptor {
 	file, err := ioutil.ReadFile(fileName)
 	if err != nil {
-		panic(err)
+		log.Panicln(err)
 	}
 	block, _ := pem.Decode([]byte(file))
 	if block == nil {
-		panic(err)
+		log.Panicln("`block` is nil")
 	}
 	private, err := x509.ParsePKCS1PrivateKey(block.Bytes)
 	if err != nil {
-		panic(err)
+		log.Panicln(err)
 	}
 	return Decryptor{SecretKey: private}
 }

@@ -1,36 +1,47 @@
-package floatdream_backend_copy
+package main
 
 import (
 	"database/sql"
 	"time"
 )
 
+type DatabaseConfig struct {
+	Source string `yaml:"source"`
+	DSN    string `yaml:"dsn"`
+}
+
 type Config struct {
 	Server struct {
 		Address string `yaml:"address"`
-		CORS bool `yaml:"cors"`
+		CORS    struct {
+			Enabled      bool     `yaml:"enabled"`
+			AllowOrigins []string `yaml:"allowOrigins"`
+		} `yaml:"cors"`
 	} `yaml:"server"`
 	Database struct {
-		Web string `yaml:"web"`
-		AuthMe string `yaml:"authMe"`
-		Game string `yaml:"game"`
+		Web    DatabaseConfig `yaml:"web"`
+		AuthMe DatabaseConfig `yaml:"authMe"`
+		Game   DatabaseConfig `yaml:"game"`
 	} `yaml:"database"`
-	Encrypt struct {
+	Encryption struct {
 		PrivateKey string `yaml:"privateKey"`
 	} `yaml:"encrypt"`
+	XorPay struct {
+		AppID     string `yaml:"appId"`
+		AppSecret string `yaml:"appSecret"`
+		NotifyURL string `yaml:"notifyUrl"`
+	}
 }
 
 // AuthMeUser describes a AuthMe user object
 // Used when connecting to AuthMe database and validate user from there
 type AuthMeUser struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username     string        `json:"username"`
+	Password     string        `json:"password"`
 	LastLoginRaw sql.NullInt64 `gorm:"column:authmelogin" json:"-"`
-	LastLogin time.Time `gorm:"-" json:"last_login"`
-	LoggedInRaw uint `gorm:"type:smallint(6)" json:"-"`
-	LoggedIn bool `gorm:"-" json:"logged_in"`
-
-	Tokens []Token `gorm:"foreignkey:ParentUsername" json:"tokens"`
+	LastLogin    time.Time     `gorm:"-" json:"last_login"`
+	LoggedInRaw  uint          `gorm:"type:smallint(6);column:isLogged" json:"-"`
+	LoggedIn     bool          `gorm:"-" json:"logged_in"`
 }
 
 func (u *AuthMeUser) TableName() string {
@@ -52,38 +63,41 @@ func (u *AuthMeUser) AfterFind() (err error) {
 }
 
 type Token struct {
-	TokenID int `gorm:"primary_key" json:"token_id"`
-	ParentUsername string `json:"parent_username"`
-	Token string `gorm:"char(32)" json:"token"`
+	Token          string    `gorm:"char(32);primary_key" json:"token"`
+	ExpireAt       time.Time `json:"expire_at"`
+	ParentUsername string    `json:"parent_username"`
 }
 
 // PlatformOrder describes a order object in payment platform.
 // Used when receives a callback from payment platform
-type PlatformOrder struct {
-	PlatformOrderID string `gorm:"unique_index" json:"platform_order_id"`
-
-	PaidPrice int64 `json:"paid_price"`
-	PaidTime time.Time `json:"paid_time"`
-
-	TransactionID string `gorm:"unique_index" json:"transaction_id"`
-	TransactionType string `json:"transaction_type"`
-	TransactionBuyer string `json:"transaction_buyer"`
-}
+//type PlatformOrder struct {
+//	PlatformOrderID string `gorm:"size:32;unique_index" json:"-"`
+//	ParentOrderID   string `gorm:"size:32" json:"-"`
+//
+//	PaidPrice int64     `json:"paid_price"`
+//	PaidTime  time.Time `json:"paid_time"`
+//
+//	TransactionID    string `gorm:"unique_index" json:"transaction_id"`
+//	TransactionType  string `json:"transaction_type"`
+//	TransactionBuyer string `json:"transaction_buyer"`
+//}
 
 // Order describes a order object in this program
 type Order struct {
-	OrderID uint64 `gorm:"unique_index" json:"order_id"`
-	PlatformOrder PlatformOrder `gorm:"foreignkey:PlatformOrderID" json:"platform_order"`
-
-	ParentUsername string `gorm:"type:varchar(255);index" json:"parent_username"`
+	OrderID         string `gorm:"size:32;unique_index" json:"order_id"`
+	PlatformOrderID string `gorm:"size:32;unique_index" json:"-"`
+	ParentUsername  string `gorm:"size:255;index" json:"-"`
 
 	CreatedAt time.Time `json:"created_at"`
-	CompletedAt *time.Time `json:"completed_at"`
 
-	PaidAmount sql.NullInt64 `json:"paid_amount"`
+	PaidPrice uint64     `json:"paid_price"`
+	PaidTime  *time.Time `json:"paid_time"`
+
+	TransactionID    string `json:"-"`
+	TransactionType  string `json:"transaction_type"`
+	TransactionBuyer string `json:"-"`
 }
 
 type EncryptedForm struct {
 	Payload string `json:"payload"`
 }
-
