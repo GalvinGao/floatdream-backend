@@ -9,8 +9,10 @@ import (
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"gopkg.in/go-playground/validator.v9"
+	"gopkg.in/romanyx/recaptcha.v1"
 	"log"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -20,12 +22,17 @@ const (
 )
 
 var (
-	Decrypt    Decryptor
 	PaySession xorpay.Session
 
 	WebData    *gorm.DB
 	AuthMeData *gorm.DB
 	GameData   *gorm.DB
+
+	LogDb   *log.Logger
+	LogPay  *log.Logger
+	LogAuth *log.Logger
+
+	ReCAPTCHAValidator *recaptcha.Client
 
 	DefaultBadRequestResponse = NewErrorResponse(http.StatusBadRequest, ErrorMessageBadRequest)
 )
@@ -40,48 +47,52 @@ func (cv *Validator) Validate(i interface{}) error {
 
 func SimulateErrorResponse(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		time.Sleep(time.Millisecond * 4000)
-		return c.JSON(http.StatusBadRequest, ErrorMessage{
-			"[simulation] 请求参数错误",
+		time.Sleep(time.Second)
+		return c.JSON(http.StatusUnauthorized, ErrorMessage{
+			"[simulation] 鉴权失败",
 		})
 	}
 }
 
 func main() {
+	LogDb = log.New(os.Stdout, "Database", log.Ldate|log.Ltime|log.Lshortfile)
+	LogPay = log.New(os.Stdout, "Payment", log.Ldate|log.Ltime|log.Lshortfile)
+	LogAuth = log.New(os.Stdout, "Authorization", log.Ldate|log.Ltime|log.Lshortfile)
+
 	// load configurations
 	var config Config
 	err := configor.Load(&config, "config.yml")
 	if err != nil {
-		log.Panic("config file error", err)
+		LogDb.Panic("config file error", err)
 	}
 
 	spew.Dump(config)
 
-	// get the decryptor
-	Decrypt = NewDecryptor(config.Encryption.PrivateKey)
-
 	// initialize the payment api
 	PaySession = xorpay.New(config.XorPay.NotifyURL, config.XorPay.AppID, config.XorPay.AppSecret)
 
+	// initialize the ReCAPTCHA validator
+	ReCAPTCHAValidator = recaptcha.New(config.ReCAPTCHA.Secret)
+
 	// initialize database connection
 	if WebData, err = gorm.Open(config.Database.Web.Source, config.Database.Web.DSN); err != nil {
-		log.Panic("failed to open database: `web`;", err)
+		LogDb.Panic("failed to open database: `web`;", err)
 	}
 
 	// initialize database tables
 	WebData.AutoMigrate(&Token{}, &Order{})
 
 	if AuthMeData, err = gorm.Open(config.Database.AuthMe.Source, config.Database.AuthMe.DSN); err != nil {
-		log.Panic("failed to open database: `authme`;", err)
+		LogDb.Panic("failed to open database: `authme`;", err)
 	}
 
 	// check if the table exists or not
 	if !AuthMeData.HasTable(&AuthMeUser{}) {
-		log.Panic("expect to see table `authme` in database `authme`")
+		LogDb.Panic("expect to see table `authme` in database `authme`")
 	}
 
 	if GameData, err = gorm.Open(config.Database.Game.Source, config.Database.Game.DSN); err != nil {
-		log.Panic("failed to open database: `game`;", err)
+		LogDb.Panic("failed to open database: `game`;", err)
 	}
 
 	e := echo.New()
@@ -106,9 +117,7 @@ func main() {
 			user.POST("/login", validateUser)
 			user.POST("/logout", invalidateUser, needValidation)
 			user.GET("/info", retrieveUserInfo, needValidation)
-			user.GET("/status", func(c echo.Context) error {
-				return c.String(http.StatusOK, "ok")
-			}, needValidation)
+			user.PATCH("/nickname", changeNickname, needValidation)
 		}
 
 		topup := api.Group("/topup")

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/dchest/uniuri"
 	"github.com/labstack/echo"
@@ -16,8 +15,9 @@ const (
 )
 
 type UserLoginRequest struct {
-	Username string `json:"username" validate:"required"`
-	Password string `json:"password" validate:"required"`
+	Username  string `json:"username" validate:"required"`
+	Password  string `json:"password" validate:"required"`
+	ReCAPTCHA string `json:"recaptcha" validate:"required"`
 }
 
 type UserLoginResponse struct {
@@ -34,35 +34,34 @@ type UserInfoResponse struct {
 }
 
 func validateUser(c echo.Context) error {
-	var form EncryptedForm
+	var form UserLoginRequest
 	if err := c.Bind(&form); err != nil {
+		LogAuth.Printf("bind form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 	if err := c.Validate(&form); err != nil {
+		LogAuth.Printf("validate form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
-	var request UserLoginRequest
-	obj, err := Decrypt.Decrypt(form)
+	_, err := ReCAPTCHAValidator.VerifyWithIP(form.ReCAPTCHA, c.RealIP())
 	if err != nil {
-		return DefaultBadRequestResponse
-	}
-	err = json.Unmarshal(obj, &request)
-	if err != nil {
-		return DefaultBadRequestResponse
+		LogAuth.Printf("recaptcha error: %v", err)
+		return NewErrorResponse(http.StatusBadRequest, "reCAPTCHA verification failed")
 	}
 
-	spew.Dump(request)
+	spew.Dump(form)
 
 	var attemptValidateUser AuthMeUser
 	err = AuthMeData.Where(&AuthMeUser{
-		Username: request.Username,
+		Username: form.Username,
 	}).Find(&attemptValidateUser).Error
 	if err != nil {
+		LogDb.Printf("find user error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageNoSuchUser)
 	}
 
-	ok := checkUserCredentials(attemptValidateUser.Password, request.Password)
+	ok := checkUserCredentials(attemptValidateUser.Password, form.Password)
 	if !ok {
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessagePasswordError)
 	}
@@ -70,10 +69,11 @@ func validateUser(c echo.Context) error {
 	token := uniuri.NewLen(32)
 	err = WebData.Create(&Token{
 		Token:          token,
-		ExpireAt:       time.Now().Add(time.Hour * 24),
+		ExpireAt:       time.Now().Add(TokenLifetime),
 		ParentUsername: attemptValidateUser.Username,
 	}).Error
 	if err != nil {
+		LogDb.Printf("create token error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageTokenError)
 	}
 
@@ -85,7 +85,8 @@ func validateUser(c echo.Context) error {
 }
 
 func invalidateUser(c echo.Context) error {
-	if WebData.Delete(c.Get("token").(*Token)).Error != nil {
+	if err := WebData.Delete(c.Get("token").(*Token)).Error; err != nil {
+		LogDb.Printf("delete token error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageTokenError)
 	}
 	return c.NoContent(http.StatusOK)
@@ -98,6 +99,7 @@ func retrieveUserInfo(c echo.Context) error {
 		Username: username,
 	}).Find(&user).Error
 	if err != nil {
+		LogDb.Printf("find user error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
 
@@ -108,6 +110,7 @@ func retrieveUserInfo(c echo.Context) error {
 		ParentUsername: username,
 	}).Find(&latestOrder).Error
 	if err != nil {
+		LogDb.Printf("get latest order error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
 	if latestOrder.PaidTime != nil {
@@ -122,4 +125,8 @@ func retrieveUserInfo(c echo.Context) error {
 		BalanceCurrent:   120, // TODO: contact acid to ask for balance interface
 		BalanceLastTopup: paidTime,
 	})
+}
+
+func changeNickname(c echo.Context) error {
+	return c.NoContent(http.StatusAccepted)
 }

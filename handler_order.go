@@ -65,6 +65,7 @@ func itemDetails(c echo.Context) error {
 func listOrder(c echo.Context) error {
 	var query PaginationRequest
 	if err := c.Bind(&query); err != nil {
+		LogDb.Printf("list query error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
@@ -73,6 +74,7 @@ func listOrder(c echo.Context) error {
 		ParentUsername: c.Get("token").(*Token).ParentUsername,
 	}).Find(&orders)
 	if db.Error != nil {
+		LogDb.Printf("find orders error: %v", db.Error)
 		return NewErrorResponse(http.StatusServiceUnavailable, ErrorMessageDatabaseError)
 	}
 
@@ -93,7 +95,7 @@ func queryOrderStatus(c echo.Context) error {
 		ParentUsername: c.Get("token").(*Token).ParentUsername,
 	}).Find(&order).Error
 	if err != nil {
-		spew.Dump(err)
+		LogDb.Printf("query order error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
 
@@ -101,39 +103,13 @@ func queryOrderStatus(c echo.Context) error {
 }
 
 func placeOrder(c echo.Context) error {
-	// Bind and validate the encrypted form
-	var f EncryptedForm
-	if err := c.Bind(&f); err != nil {
-		spew.Dump(err)
-		return DefaultBadRequestResponse
-	}
-	if err := c.Validate(&f); err != nil {
-		spew.Dump(err)
-		return DefaultBadRequestResponse
-	}
-
-	// decrypt form data from field "payload"
-	obj, err := Decrypt.Decrypt(f)
-	if err != nil {
-		spew.Dump(err)
-		return DefaultBadRequestResponse
-	}
-
-	// bind decrypted json string to request struct
 	var form PlaceOrderRequest
-	err = json.Unmarshal(obj, &form)
-	if err != nil {
-		spew.Dump(err)
-		return DefaultBadRequestResponse
-	}
-
-	// validate the form struct
 	if err := c.Bind(&form); err != nil {
-		spew.Dump(err)
+		LogPay.Printf("bind form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 	if err := c.Validate(&form); err != nil {
-		spew.Dump(err)
+		LogPay.Printf("validate form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
@@ -146,6 +122,7 @@ func placeOrder(c echo.Context) error {
 		OrderID: orderId,
 	})
 	if err != nil {
+		LogPay.Printf("create order error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
@@ -157,6 +134,7 @@ func placeOrder(c echo.Context) error {
 		PaidPrice:       form.Price,
 	}).Error
 	if err != nil {
+		LogDb.Printf("save order error: %v", err)
 		return NewErrorResponse(http.StatusInternalServerError, ErrorMessageDatabaseError)
 	}
 
@@ -170,30 +148,34 @@ func placeOrder(c echo.Context) error {
 func storeOrder(c echo.Context) error {
 	var form xorpay.PlatformNotifyResponse
 	if err := c.Bind(&form); err != nil {
-		spew.Dump("bind:", err)
+		LogPay.Printf("bind form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 	if err := c.Validate(&form); err != nil {
-		spew.Dump(err)
+		LogPay.Printf("validate form error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
 	if !PaySession.CheckSign(&form) {
+		LogPay.Printf("check sign error for form: %v", spew.Sdump(form))
 		return NewErrorResponse(http.StatusUnauthorized, ErrorMessageSignInvalid)
 	}
 
 	timezone, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
+		LogPay.Printf("read timezone error: %v", err)
 		return c.String(http.StatusInternalServerError, "服务器内部错误")
 	}
 
 	paidTime, err := time.ParseInLocation("2006-01-02 15:04:05", form.PayTime, timezone)
 	if err != nil {
+		LogPay.Printf("parse time error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
 	var detail xorpay.PlatformNotifyResponseDetail
 	if err = json.Unmarshal([]byte(form.Detail), &detail); err != nil {
+		LogPay.Printf("unmarshal error: %v", err)
 		return DefaultBadRequestResponse
 	}
 
@@ -207,6 +189,7 @@ func storeOrder(c echo.Context) error {
 		TransactionBuyer: detail.TransactionBuyer,
 	}).Error
 	if err != nil {
+		LogPay.Printf("update order error: %v", err)
 		return DefaultBadRequestResponse
 	}
 

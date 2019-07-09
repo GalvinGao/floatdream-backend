@@ -17,8 +17,8 @@ database:
     source: "mysql"
     dsn: "floatdream:floatdream@tcp(localhost:3306)/floatdream_game?charset=utf8mb4&parseTime=True&loc=Local"
 
-encrypt:
-  privateKey: "private.pem"
+recaptcha:
+  secret: "6Lceo6wUAAAAABzhgqA4vuRcyGhntTmNk0Z29Fl-"
 
 xorpay:
   appId: "4415"

@@ -23,9 +23,9 @@ type Config struct {
 		AuthMe DatabaseConfig `yaml:"authMe"`
 		Game   DatabaseConfig `yaml:"game"`
 	} `yaml:"database"`
-	Encryption struct {
-		PrivateKey string `yaml:"privateKey"`
-	} `yaml:"encrypt"`
+	ReCAPTCHA struct {
+		Secret string `yaml:"secret"`
+	} `yaml:"recaptcha"`
 	XorPay struct {
 		AppID     string `yaml:"appId"`
 		AppSecret string `yaml:"appSecret"`
