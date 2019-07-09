@@ -23,6 +23,9 @@ type Config struct {
 		AuthMe DatabaseConfig `yaml:"authMe"`
 		Game   DatabaseConfig `yaml:"game"`
 	} `yaml:"database"`
+	Game struct {
+		Address string `yaml:"address"`
+	} `yaml:"game"`
 	ReCAPTCHA struct {
 		Secret string `yaml:"secret"`
 	} `yaml:"recaptcha"`

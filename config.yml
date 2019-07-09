@@ -20,6 +20,9 @@ database:
 recaptcha:
   secret: "6Lceo6wUAAAAABzhgqA4vuRcyGhntTmNk0Z29Fl-"
 
+game:
+  address: "10.6.6.66:3306"
+
 xorpay:
   appId: "4415"
   appSecret: "690f671eb0424a5aa152962545b6b69b"

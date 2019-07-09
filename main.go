@@ -2,6 +2,7 @@ package main
 
 import (
 	"github.com/GalvinGao/floatdream-backend/xorpay"
+	rice "github.com/GeertJohan/go.rice"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/jinzhu/configor"
 	"github.com/jinzhu/gorm"
@@ -110,8 +111,13 @@ func main() {
 		validator: validator.New(),
 	}
 
+	assetHandler := http.FileServer(rice.MustFindBox("ui").HTTPBox())
+	e.GET("/", echo.WrapHandler(assetHandler))
+	e.GET("/static/*", echo.WrapHandler(http.StripPrefix("/static/", assetHandler)))
+
 	api := e.Group("/api")
 	{
+		api.GET("/status", fetchServerStatus(config.Game.Address))
 		user := api.Group("/user")
 		{
 			user.POST("/login", validateUser)
@@ -132,6 +138,14 @@ func main() {
 			}
 		}
 	}
+
+	e.GET("*", func(c echo.Context) error {
+		file, err := rice.MustFindBox("ui").Bytes("index.html")
+		if err != nil {
+			return NewErrorResponse(http.StatusInternalServerError, "Handle 访问失败")
+		}
+		return c.Blob(http.StatusOK, "text/html", file)
+	})
 
 	log.Fatalln(e.Start(config.Server.Address))
 }
