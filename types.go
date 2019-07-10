@@ -52,16 +52,10 @@ func (u *AuthMeUser) TableName() string {
 }
 
 func (u *AuthMeUser) AfterFind() (err error) {
-	if u.LoggedInRaw == 0 {
-		u.LoggedIn = false
-	} else {
-		u.LoggedIn = true
-	}
-
+	u.LoggedIn = u.LoggedInRaw == 0
 	if u.LastLoginRaw.Valid {
-		u.LastLogin = time.Unix(u.LastLoginRaw.Int64, 0)
+		u.LastLogin = time.Unix(u.LastLoginRaw.Int64/1000, 0)
 	}
-
 	return
 }
 
@@ -78,7 +72,7 @@ type Token struct {
 //	ParentOrderID   string `gorm:"size:32" json:"-"`
 //
 //	PaidPrice int64     `json:"paid_price"`
-//	PaidTime  time.Time `json:"paid_time"`
+//	PaidAt  time.Time `json:"paid_time"`
 //
 //	TransactionID    string `gorm:"unique_index" json:"transaction_id"`
 //	TransactionType  string `json:"transaction_type"`
@@ -87,19 +81,40 @@ type Token struct {
 
 // Order describes a order object in this program
 type Order struct {
-	OrderID         string `gorm:"size:32;unique_index" json:"order_id"`
-	PlatformOrderID string `gorm:"size:32;unique_index" json:"-"`
-	ParentUsername  string `gorm:"size:255;index" json:"-"`
+	OrderID         string `gorm:"size:32;unique_index;NOT NULL" json:"order_id"`
+	PlatformOrderID string `gorm:"size:32;unique_index;NOT NULL" json:"-"`
+	ParentUsername  string `gorm:"size:255;index;NOT NULL" json:"-"`
+	PayType         string `gorm:"size:32;NOT NULL" json:"pay_type"`
 
-	CreatedAt time.Time `json:"created_at"`
+	CreatedAt time.Time `gorm:"NOT NULL" json:"created_at"`
 
-	PaidPrice uint64     `json:"paid_price"`
-	PaidTime  *time.Time `json:"paid_time"`
+	Paid      bool       `gorm:"-" json:"paid"`
+	PaidPrice uint64     `gorm:"size:8;NOT NULL" json:"paid_price"`
+	PaidAt    *time.Time `json:"paid_at"`
 
-	TransactionID    string `json:"-"`
-	TransactionType  string `json:"transaction_type"`
-	TransactionBuyer string `json:"-"`
+	TransactionID   string `gorm:"size:64" json:"-"`
+	TransactionType string `gorm:"size:64" json:"transaction_type"`
+	//TransactionBuyer string `json:"-"`
+
+	Processed   bool       `gorm:"-" json:"processed"`
+	ProcessedAt *time.Time `json:"processed_at"`
 }
+
+func (o *Order) AfterFind() (err error) {
+	o.Paid = o.PaidAt != nil
+	o.Processed = o.ProcessedAt != nil
+	return
+}
+
+// PaidOrder describes an order which has been paid and is going to be stored in Game Database for topup purposes.
+//type PaidOrder struct {
+//	OrderID   string    `gorm:"size:32;unique_index" json:"order_id"`
+//	Username  string    `gorm:"size:255;index" json:"username"`
+//	CreatedAt time.Time `json:"created_at"`
+//	PaidAt    time.Time `json:"paid_at"`
+//	PaidPrice uint64    `json:"paid_price"`
+//	Processed bool      `json:"processed"`
+//}
 
 type EncryptedForm struct {
 	Payload string `json:"payload"`

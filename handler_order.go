@@ -15,7 +15,11 @@ const (
 	ErrorMessageGameBackendUnavailable = "游戏服务器无响应"
 	ErrorMessageGameBackendBadRequest  = "游戏服务器返回了无效信息"
 	ErrorMessageSignInvalid            = "Sign 校验失败"
+
+	ErrorMessageNotifyDefaultError = "上下文校验失败：检查参数合法性"
 )
+
+var OrderIDCharCandidates = []byte("abcdefghijklmnopqrstuvwxyz0123456789")
 
 type GameBackendItemRequest struct {
 	Ratio uint `json:"ratio,string" xml:"ratio"`
@@ -72,17 +76,17 @@ func listOrder(c echo.Context) error {
 	var orders []Order
 	db := WebData.Where(&Order{
 		ParentUsername: c.Get("token").(*Token).ParentUsername,
-	}).Find(&orders)
+	})
 	if db.Error != nil {
 		LogDb.Printf("find orders error: %v", db.Error)
-		return NewErrorResponse(http.StatusServiceUnavailable, ErrorMessageDatabaseError)
+		return NewErrorResponse(http.StatusBadRequest, "查找订单失败")
 	}
 
 	paginator := pagination.Paging(&pagination.Param{
 		DB:      db,
 		Page:    query.Page,
 		Limit:   query.Limit,
-		OrderBy: []string{"id desc"},
+		OrderBy: []string{"paid_at asc"},
 		ShowSQL: true,
 	}, &orders)
 	return c.JSON(http.StatusOK, paginator)
@@ -93,10 +97,10 @@ func queryOrderStatus(c echo.Context) error {
 	err := WebData.Where(&Order{
 		OrderID:        c.Param("orderId"),
 		ParentUsername: c.Get("token").(*Token).ParentUsername,
-	}).Find(&order).Error
+	}).Last(&order).Error
 	if err != nil {
 		LogDb.Printf("query order error: %v", err)
-		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
+		return NewErrorResponse(http.StatusBadRequest, "未找到订单")
 	}
 
 	return c.JSON(http.StatusOK, order)
@@ -113,8 +117,10 @@ func placeOrder(c echo.Context) error {
 		return DefaultBadRequestResponse
 	}
 
-	orderId := uniuri.NewLen(32)
+	// generate a 32 bytes-long containing only OrderIDCharCandidates characters random string as the new orderId
+	orderId := uniuri.NewLenChars(32, OrderIDCharCandidates)
 
+	// sends the payment request
 	response, err := PaySession.Pay(xorpay.Transaction{
 		Name:    "Life 币充值",
 		PayType: form.Payment,
@@ -123,13 +129,14 @@ func placeOrder(c echo.Context) error {
 	})
 	if err != nil {
 		LogPay.Printf("create order error: %v", err)
-		return DefaultBadRequestResponse
+		return echo.NewHTTPError(http.StatusInternalServerError, "支付发起失败，稍后请重试")
 	}
 
 	err = WebData.Create(&Order{
 		OrderID:         orderId,
 		PlatformOrderID: response.PlatformOrderID,
 		ParentUsername:  c.Get("token").(*Token).ParentUsername,
+		PayType:         form.Payment,
 		CreatedAt:       time.Now(),
 		PaidPrice:       form.Price,
 	}).Error
@@ -158,7 +165,7 @@ func storeOrder(c echo.Context) error {
 
 	if !PaySession.CheckSign(&form) {
 		LogPay.Printf("check sign error for form: %v", spew.Sdump(form))
-		return NewErrorResponse(http.StatusUnauthorized, ErrorMessageSignInvalid)
+		return NewErrorResponse(http.StatusNotAcceptable, ErrorMessageSignInvalid)
 	}
 
 	timezone, err := time.LoadLocation("Asia/Shanghai")
@@ -167,7 +174,7 @@ func storeOrder(c echo.Context) error {
 		return c.String(http.StatusInternalServerError, "服务器内部错误")
 	}
 
-	paidTime, err := time.ParseInLocation("2006-01-02 15:04:05", form.PayTime, timezone)
+	paidAt, err := time.ParseInLocation("2006-01-02 15:04:05", form.PayTime, timezone)
 	if err != nil {
 		LogPay.Printf("parse time error: %v", err)
 		return DefaultBadRequestResponse
@@ -179,19 +186,54 @@ func storeOrder(c echo.Context) error {
 		return DefaultBadRequestResponse
 	}
 
-	err = WebData.Table("Orders").Where(&Order{
+	// search for the corresponding order
+	db := WebData.Where(&Order{
 		PlatformOrderID: form.PlatformOrderID,
 		ParentUsername:  c.Get("token").(*Token).ParentUsername,
-	}).Update(&Order{
-		PaidTime:         &paidTime,
-		TransactionID:    detail.TransactionID,
-		TransactionType:  detail.TransactionType,
-		TransactionBuyer: detail.TransactionBuyer,
+	})
+
+	if err = db.Error; err != nil {
+		LogPay.Printf("find initial order error: %v", err)
+		return NewErrorResponse(http.StatusFailedDependency, "无对应用户订单记录")
+	}
+
+	var order Order
+	if err = db.Find(&order).Error; err != nil {
+		LogPay.Printf("find initial order error: %v", err)
+		return NewErrorResponse(http.StatusInternalServerError, ErrorMessageDatabaseError)
+	}
+
+	// the order has already been saved before. abort to prevent saving duplicated order information.
+	if order.PaidAt != nil {
+		LogPay.Printf("attempt to save duplicated order %v with already existing order %v",
+			spew.Sdump(form), spew.Sdump(order))
+		return NewErrorResponse(http.StatusConflict, "重复的订单记录")
+	}
+
+	// according to form posted, update the corresponding order
+	err = db.Update(&Order{
+		PaidAt:          &paidAt,
+		TransactionID:   detail.TransactionID,
+		TransactionType: detail.TransactionType,
+		//TransactionBuyer: detail.TransactionBuyer,
 	}).Error
 	if err != nil {
 		LogPay.Printf("update order error: %v", err)
-		return DefaultBadRequestResponse
+		return NewErrorResponse(http.StatusInternalServerError, ErrorMessageDatabaseError)
 	}
+
+	//err = GameData.Create(&PaidOrder{
+	//	OrderID:   order.OrderID,
+	//	Username:  c.Get("token").(*Token).ParentUsername,
+	//	CreatedAt: order.CreatedAt,
+	//	PaidAt:    paidAt,
+	//	PaidPrice: order.PaidPrice,
+	//	Processed: false,
+	//}).Error
+	//if err != nil {
+	//	LogPay.Printf("store order to game db error: %v", err)
+	//	return DefaultBadRequestResponse
+	//}
 
 	return c.NoContent(http.StatusAccepted)
 }

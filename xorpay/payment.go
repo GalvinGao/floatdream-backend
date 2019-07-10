@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/davecgh/go-spew/spew"
+	"github.com/sethgrid/pester"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,7 +26,7 @@ type Session struct {
 	AppSecret string `json:"app_secret"`
 	PayURL    string `json:"pay_url"`
 
-	Client http.Client `json:"-"`
+	Client pester.Client `json:"-"`
 }
 
 type Transaction struct {
@@ -65,8 +66,12 @@ func New(notifyUrl string, appId string, appSecret string) Session {
 		AppID:     appId,
 		AppSecret: appSecret,
 		PayURL:    fmt.Sprintf(PayURLTemplate, appId),
-		Client: http.Client{
-			Timeout: Timeout,
+		Client: pester.Client{
+			Concurrency: 3,
+			Timeout:     5,
+			MaxRetries:  3,
+			Backoff:     pester.ExponentialJitterBackoff,
+			KeepLog:     true,
 		},
 	}
 }

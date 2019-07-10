@@ -55,7 +55,7 @@ func validateUser(c echo.Context) error {
 	var attemptValidateUser AuthMeUser
 	err = AuthMeData.Where(&AuthMeUser{
 		Username: form.Username,
-	}).Find(&attemptValidateUser).Error
+	}).First(&attemptValidateUser).Error
 	if err != nil {
 		LogDb.Printf("find user error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageNoSuchUser)
@@ -67,9 +67,10 @@ func validateUser(c echo.Context) error {
 	}
 
 	token := uniuri.NewLen(32)
-	err = WebData.Create(&Token{
-		Token:          token,
-		ExpireAt:       time.Now().Add(TokenLifetime),
+	err = WebData.Attrs(&Token{
+		Token:    token,
+		ExpireAt: time.Now().Add(TokenLifetime),
+	}).FirstOrCreate(&Token{
 		ParentUsername: attemptValidateUser.Username,
 	}).Error
 	if err != nil {
@@ -95,9 +96,9 @@ func invalidateUser(c echo.Context) error {
 func retrieveUserInfo(c echo.Context) error {
 	username := c.Get("token").(*Token).ParentUsername
 	var user AuthMeUser
-	err := AuthMeData.First(&AuthMeUser{
+	err := AuthMeData.Where(&AuthMeUser{
 		Username: username,
-	}).Find(&user).Error
+	}).Last(&user).Error
 	if err != nil {
 		LogDb.Printf("find user error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
@@ -106,17 +107,17 @@ func retrieveUserInfo(c echo.Context) error {
 	var paidTime *time.Time
 
 	var latestOrder Order
-	err = WebData.Order("paid_time DESC").Last(&Order{
+	err = WebData.Order("paid_time DESC").Where(&Order{
 		ParentUsername: username,
-	}).Find(&latestOrder).Error
+	}).Last(&latestOrder).Error
 	if err != nil {
 		LogDb.Printf("get latest order error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
-	if latestOrder.PaidTime != nil {
-		paidTime = nil
+	if latestOrder.PaidAt != nil {
+		paidTime = latestOrder.PaidAt
 	} else {
-		paidTime = latestOrder.PaidTime
+		paidTime = nil
 	}
 
 	return c.JSON(http.StatusOK, UserInfoResponse{

@@ -23,12 +23,24 @@ func needValidation(next echo.HandlerFunc) echo.HandlerFunc {
 		userToken := strings.TrimPrefix(credentials, "Bearer ")
 
 		var token Token
-		err := WebData.First(&Token{
+		err := WebData.Where(&Token{
 			Token: userToken,
-		}).Find(&token).Error
+		}).First(&token).Error
 		if err != nil {
 			LogAuth.Printf("validate token error: %v", err)
 			return NewErrorResponse(http.StatusUnauthorized, ErrorMessageNeedAuthorization)
+		}
+
+		var tokens []Token
+		err = WebData.Where(&Token{
+			ParentUsername: token.ParentUsername,
+		}).Offset(1).Find(&tokens).Error
+		if err == nil {
+			for _, v := range tokens {
+				if v.ExpireAt.Before(time.Now()) {
+					WebData.Delete(v)
+				}
+			}
 		}
 
 		if token.ExpireAt.Before(time.Now()) {

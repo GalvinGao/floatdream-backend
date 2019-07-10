@@ -20,6 +20,7 @@ import (
 const (
 	ErrorMessageBadRequest    = "请求参数错误"
 	ErrorMessageDatabaseError = "数据库错误"
+	ErrorMessageServerError   = "服务器内部错误"
 )
 
 var (
@@ -95,6 +96,8 @@ func main() {
 	if GameData, err = gorm.Open(config.Database.Game.Source, config.Database.Game.DSN); err != nil {
 		LogDb.Panic("failed to open database: `game`;", err)
 	}
+
+	//GameData.AutoMigrate(&PaidOrder{})
 
 	e := echo.New()
 	e.Use(middleware.LoggerWithConfig(middleware.LoggerConfig{
