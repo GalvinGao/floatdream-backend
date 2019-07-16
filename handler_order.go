@@ -2,12 +2,14 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"github.com/GalvinGao/floatdream-backend/xorpay"
 	"github.com/biezhi/gorm-paginator/pagination"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/dchest/uniuri"
 	"github.com/labstack/echo"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -29,13 +31,16 @@ type ItemDetailsResponse struct {
 	Ratio uint `json:"ratio"`
 }
 
-type PaginationRequest struct {
-	Page  int `json:"page,string" query:"page"`
-	Limit int `json:"limit,string" query:"limit"`
+type ListOrderRequest struct {
+	Page  int `query:"page" validate:"required,min=1"`
+	Limit int `query:"limit" validate:"required,min=1,max=25"`
+
+	SortKey   string `query:"sort_key" validate:"oneof=created_at paid_price" default:"created_at"`
+	SortOrder string `query:"sort_order" validate:"oneof=desc asc" default:"desc"`
 }
 
 type PlaceOrderRequest struct {
-	Price   uint64 `json:"price,string" validate:"required"`
+	Price   uint64 `json:"price,string" validate:"required,min=1,max=10000"`
 	Payment string `json:"payment" validate:"required,oneof=alipay native"`
 }
 
@@ -67,7 +72,7 @@ func itemDetails(c echo.Context) error {
 }
 
 func listOrder(c echo.Context) error {
-	var query PaginationRequest
+	var query ListOrderRequest
 	if err := c.Bind(&query); err != nil {
 		LogDb.Printf("list query error: %v", err)
 		return DefaultBadRequestResponse
@@ -79,14 +84,14 @@ func listOrder(c echo.Context) error {
 	})
 	if db.Error != nil {
 		LogDb.Printf("find orders error: %v", db.Error)
-		return NewErrorResponse(http.StatusBadRequest, "查找订单失败")
+		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
 
 	paginator := pagination.Paging(&pagination.Param{
 		DB:      db,
 		Page:    query.Page,
 		Limit:   query.Limit,
-		OrderBy: []string{"paid_at asc"},
+		OrderBy: []string{strings.Join([]string{query.SortKey, query.SortOrder}, " ")},
 		ShowSQL: true,
 	}, &orders)
 	return c.JSON(http.StatusOK, paginator)
@@ -104,6 +109,63 @@ func queryOrderStatus(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, order)
+}
+
+func pollOrderStatus(c echo.Context) error {
+	orderId := c.Param("orderId")
+
+	c.Response().Header().Set("Content-Type", "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	if _, err := c.Response().Write([]byte("event: connected\ndata: connected\n\n")); err != nil {
+		return c.NoContent(http.StatusInternalServerError)
+	}
+	c.Response().Flush()
+
+	keepAliveTimer := time.NewTicker(10 * time.Second)
+	expireTimer := time.NewTimer(2 * time.Hour)
+
+	subscriber, err := RealtimeOrderBroker.Attach()
+	RealtimeOrderBroker.Subscribe(subscriber, orderId)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		RealtimeOrderBroker.Unsubscribe(subscriber, orderId)
+		keepAliveTimer.Stop()
+		expireTimer.Stop()
+	}()
+
+BROKER:
+	for {
+		select {
+		case <-keepAliveTimer.C:
+			_, err := c.Response().Write([]byte(": keep-alive\n\n"))
+			if err != nil {
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			c.Response().Flush()
+		case <-expireTimer.C:
+			if _, err := c.Response().Write([]byte("event: expired\ndata: expired\n\n")); err != nil {
+				return c.NoContent(http.StatusInternalServerError)
+			}
+			c.Response().Flush()
+			break BROKER
+		case <-c.Request().Context().Done():
+			break BROKER
+		case data := <-subscriber.GetMessages():
+			order := data.GetPayload().(*Order)
+			spew.Dump(order)
+			if order.OrderID == orderId && order.ParentUsername == c.Get("token").(*Token).ParentUsername {
+				if _, err := c.Response().Write([]byte(fmt.Sprintf("event: received\ndata: %s\n\n", order.OrderID))); err != nil {
+					return c.NoContent(http.StatusInternalServerError)
+				}
+				c.Response().Flush()
+				break BROKER
+			}
+		}
+	}
+	return c.NoContent(http.StatusOK)
 }
 
 func placeOrder(c echo.Context) error {
@@ -234,6 +296,8 @@ func storeOrder(c echo.Context) error {
 	//	LogPay.Printf("store order to game db error: %v", err)
 	//	return DefaultBadRequestResponse
 	//}
+
+	RealtimeOrderBroker.Broadcast(&order, order.OrderID)
 
 	return c.NoContent(http.StatusAccepted)
 }

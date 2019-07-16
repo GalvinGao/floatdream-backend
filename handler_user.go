@@ -15,8 +15,8 @@ const (
 )
 
 type UserLoginRequest struct {
-	Username  string `json:"username" validate:"required"`
-	Password  string `json:"password" validate:"required"`
+	Username  string `json:"username" validate:"required,min=2,max=20"`
+	Password  string `json:"password" validate:"required,min=2,max=20"`
 	ReCAPTCHA string `json:"recaptcha" validate:"required"`
 }
 
@@ -44,10 +44,10 @@ func validateUser(c echo.Context) error {
 		return DefaultBadRequestResponse
 	}
 
-	_, err := ReCAPTCHAValidator.VerifyWithIP(form.ReCAPTCHA, c.RealIP())
-	if err != nil {
+	resp, err := ReCAPTCHAValidator.VerifyWithIP(form.ReCAPTCHA, c.RealIP())
+	if err != nil || resp.Success != true {
 		LogAuth.Printf("recaptcha error: %v", err)
-		return NewErrorResponse(http.StatusBadRequest, "reCAPTCHA verification failed")
+		return NewErrorResponse(http.StatusBadRequest, "reCAPTCHA 人机识别验证失败：请刷新页面重试")
 	}
 
 	spew.Dump(form)
@@ -66,13 +66,15 @@ func validateUser(c echo.Context) error {
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessagePasswordError)
 	}
 
-	token := uniuri.NewLen(32)
-	err = WebData.Attrs(&Token{
-		Token:    token,
-		ExpireAt: time.Now().Add(TokenLifetime),
-	}).FirstOrCreate(&Token{
+	tokenContent := uniuri.NewLen(32)
+
+	var token Token
+	err = WebData.Where(&Token{
 		ParentUsername: attemptValidateUser.Username,
-	}).Error
+	}).Attrs(&Token{
+		Token:    tokenContent,
+		ExpireAt: time.Now().Add(TokenLifetime),
+	}).FirstOrCreate(&token).Error
 	if err != nil {
 		LogDb.Printf("create token error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageTokenError)
@@ -80,7 +82,7 @@ func validateUser(c echo.Context) error {
 
 	return c.JSON(http.StatusAccepted, UserLoginResponse{
 		Username: attemptValidateUser.Username,
-		Token:    token,
+		Token:    token.Token,
 		Nickname: "", // TODO: contact acid to retrieve nickname information.
 	})
 }
@@ -104,16 +106,16 @@ func retrieveUserInfo(c echo.Context) error {
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
 
-	var paidTime *time.Time
-
 	var latestOrder Order
-	err = WebData.Order("paid_time DESC").Where(&Order{
+	err = WebData.Order("paid_at DESC").Where(&Order{
 		ParentUsername: username,
 	}).Last(&latestOrder).Error
 	if err != nil {
 		LogDb.Printf("get latest order error: %v", err)
 		return NewErrorResponse(http.StatusBadRequest, ErrorMessageDatabaseError)
 	}
+
+	var paidTime *time.Time
 	if latestOrder.PaidAt != nil {
 		paidTime = latestOrder.PaidAt
 	} else {

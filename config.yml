@@ -3,6 +3,7 @@ server:
   cors:
     enabled: true
     allowOrigins:
+#      - "*"
       - "https://floatdream.cn"
       - "http://localhost:8080"
 
@@ -27,4 +28,4 @@ xorpay:
   appId: "4415"
   appSecret: "690f671eb0424a5aa152962545b6b69b"
   notifyUrl: "https://endxegen9c9kn.x.pipedream.net"
-#  notifyUrl: "https://floatdream.cn/api/topup/callback"
+#  notifyUrl: "https://floatdream.cn/api/topup/order/callback"

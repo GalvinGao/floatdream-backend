@@ -21,11 +21,12 @@ func needValidation(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		credentials := c.Request().Header.Get("authorization")
 		userToken := strings.TrimPrefix(credentials, "Bearer ")
+		if userToken == "" {
+			userToken = c.QueryParam("bearer")
+		}
 
 		var token Token
-		err := WebData.Where(&Token{
-			Token: userToken,
-		}).First(&token).Error
+		err := WebData.Debug().Where("token = ?", userToken).First(&token).Error
 		if err != nil {
 			LogAuth.Printf("validate token error: %v", err)
 			return NewErrorResponse(http.StatusUnauthorized, ErrorMessageNeedAuthorization)

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"github.com/GalvinGao/floatdream-backend/recaptcha"
 	"github.com/GalvinGao/floatdream-backend/xorpay"
 	rice "github.com/GeertJohan/go.rice"
+	"github.com/alash3al/go-pubsub"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/jinzhu/configor"
 	"github.com/jinzhu/gorm"
@@ -10,7 +12,6 @@ import (
 	"github.com/labstack/echo"
 	"github.com/labstack/echo/middleware"
 	"gopkg.in/go-playground/validator.v9"
-	"gopkg.in/romanyx/recaptcha.v1"
 	"log"
 	"net/http"
 	"os"
@@ -36,6 +37,9 @@ var (
 
 	ReCAPTCHAValidator *recaptcha.Client
 
+	ServerStatusCache   *CachedServerStatus
+	RealtimeOrderBroker = pubsub.NewBroker()
+
 	DefaultBadRequestResponse = NewErrorResponse(http.StatusBadRequest, ErrorMessageBadRequest)
 )
 
@@ -56,6 +60,44 @@ func SimulateErrorResponse(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+//func CreatePubSubModel() (publishChan chan<- interface{}, subscribeFunc func(subscribeKey string) (<-chan interface{}, error), unsubscribeFunc func(unsubscribeKey string)) {
+//	var syncLock sync.Mutex
+//	var subscriber map[string]chan interface{}
+//	subscribeFunc = func(subscribeKey string) (<-chan interface{}, error) {
+//		fmt.Printf("subscribed to %s", subscribeKey)
+//		newChan := make(chan interface{}, 255)
+//		syncLock.Lock()
+//		if _, ok := subscriber[subscribeKey]; ok {
+//			return nil, errors.New("only one subscriber of a corresponding order is allowed")
+//		}
+//		subscriber[subscribeKey] = newChan
+//		fmt.Println("subscribers appended", spew.Sdump(subscriber, newChan))
+//		syncLock.Unlock()
+//		return newChan, nil
+//	}
+//	unsubscribeFunc = func(unsubscribeKey string) {
+//		syncLock.Lock()
+//		delete(subscriber, unsubscribeKey)
+//		syncLock.Unlock()
+//	}
+//	publishChanReceivable := make(chan interface{}, 65536)
+//	publishChan = publishChanReceivable
+//	go func() {
+//		for data := range publishChanReceivable {
+//			func() {
+//				fmt.Println("broadcasting")
+//				syncLock.Lock()
+//				defer syncLock.Unlock()
+//				for _, receiver := range subscriber {
+//					fmt.Println("receiver <- data:", spew.Sdump(receiver, data))
+//					receiver <- data
+//				}
+//			}()
+//		}
+//	}()
+//	return
+//}
+
 func main() {
 	LogDb = log.New(os.Stdout, "Database", log.Ldate|log.Ltime|log.Lshortfile)
 	LogPay = log.New(os.Stdout, "Payment", log.Ldate|log.Ltime|log.Lshortfile)
@@ -75,6 +117,9 @@ func main() {
 
 	// initialize the ReCAPTCHA validator
 	ReCAPTCHAValidator = recaptcha.New(config.ReCAPTCHA.Secret)
+
+	// initialize the server status getter
+	ServerStatusCache = NewStatusCache(config.Game.Address, time.Minute*5)
 
 	// initialize database connection
 	if WebData, err = gorm.Open(config.Database.Web.Source, config.Database.Web.DSN); err != nil {
@@ -120,7 +165,7 @@ func main() {
 
 	api := e.Group("/api")
 	{
-		api.GET("/status", fetchServerStatus(config.Game.Address))
+		api.GET("/status", provideServerStatus)
 		user := api.Group("/user")
 		{
 			user.POST("/login", validateUser)
@@ -136,19 +181,29 @@ func main() {
 			{
 				order.GET("", listOrder)
 				order.GET("/:orderId/status", queryOrderStatus)
+				order.GET("/:orderId/polling", pollOrderStatus)
 				order.POST("", placeOrder)
 				order.POST("/callback", storeOrder)
 			}
+			h := topup.GET("/testsse", func(c echo.Context) error {
+				RealtimeOrderBroker.Broadcast(&Order{
+					OrderID:        c.QueryParam("orderId"),
+					ParentUsername: c.QueryParam("parentUsername"),
+				}, c.QueryParam("orderId"))
+
+				return c.NoContent(http.StatusOK)
+			})
+			spew.Dump(h)
 		}
 	}
 
-	e.GET("*", func(c echo.Context) error {
-		file, err := rice.MustFindBox("ui").Bytes("index.html")
-		if err != nil {
-			return NewErrorResponse(http.StatusInternalServerError, "Handle 访问失败")
-		}
-		return c.Blob(http.StatusOK, "text/html", file)
-	})
+	//e.GET("*", func(c echo.Context) error {
+	//	file, err := rice.MustFindBox("ui").Bytes("index.html")
+	//	if err != nil {
+	//		return NewErrorResponse(http.StatusInternalServerError, "Handle 访问失败")
+	//	}
+	//	return c.Blob(http.StatusOK, "text/html", file)
+	//})
 
 	log.Fatalln(e.Start(config.Server.Address))
 }
