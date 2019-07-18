@@ -161,7 +161,7 @@ func main() {
 
 	assetHandler := http.FileServer(rice.MustFindBox("ui").HTTPBox())
 	e.GET("/", echo.WrapHandler(assetHandler))
-	e.GET("/static/*", echo.WrapHandler(http.StripPrefix("/static/", assetHandler)))
+	e.GET("/assets/*", echo.WrapHandler(assetHandler))
 
 	api := e.Group("/api")
 	{
@@ -197,10 +197,17 @@ func main() {
 		}
 	}
 
+	e.GET("/_checkBrowser", func(c echo.Context) error {
+		file, err := rice.MustFindBox("ui").Bytes("browserCompatibilityCheck.html")
+		if err != nil {
+			return NewErrorResponse(http.StatusInternalServerError, "Handle 失败")
+		}
+		return c.Blob(http.StatusOK, "text/html", file)
+	})
 	//e.GET("*", func(c echo.Context) error {
 	//	file, err := rice.MustFindBox("ui").Bytes("index.html")
 	//	if err != nil {
-	//		return NewErrorResponse(http.StatusInternalServerError, "Handle 访问失败")
+	//		return NewErrorResponse(http.StatusInternalServerError, "Handle 失败")
 	//	}
 	//	return c.Blob(http.StatusOK, "text/html", file)
 	//})

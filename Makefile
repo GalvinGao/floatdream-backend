@@ -10,3 +10,8 @@ build:
 	-rm floatdream
 	go build -o floatdream
 	rice append --exec floatdream
+
+gobuild:
+	-rm floatdream
+	go build -o floatdream
+	rice append --exec floatdream
